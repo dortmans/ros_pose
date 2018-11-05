@@ -1,0 +1,20 @@
+<launch>
+  <arg name="image_topic" default="/camera/image_raw" />
+  <arg name="pose_topic" default="body_pose" />
+  <arg name="network" default="$(find ros_pose)/config/graph_opt.pb" />
+  <arg name="width" default="368" />
+  <arg name="height" default="368" />
+  <arg name="display" default="False" />
+  <arg name="threshold" default="0.2" />
+  
+  <node name="pose_estimator" pkg="ros_pose" type="pose_estimator.py"  output="screen" respawn="false">
+    <remap from="image_raw" to="$(arg image_topic)" />
+    <remap from="body_pose" to="$(arg pose_topic)" />
+    <param name="network" type="string" value="$(arg network)" />
+    <param name="width" type="int" value="$(arg width)" />
+    <param name="height" type="int" value="$(arg height)" />
+    <param name="display" type="bool" value="$(arg display)" />
+    <param name="threshold" type="double" value="$(arg threshold)" />
+  </node>
+  
+</launch>
