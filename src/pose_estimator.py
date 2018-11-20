@@ -6,14 +6,18 @@
 from __future__ import print_function
 from __future__ import division
 
+import sys
+import os
+import math
 import rospy
+from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
 from ros_pose.msg import BodyPose
-from cv_bridge import CvBridge, CvBridgeError
+
 import cv2
+#print(cv2.__version__)
+
 import numpy as np
-import sys
-import math
 
 __author__ = "Eric Dortmans"
 

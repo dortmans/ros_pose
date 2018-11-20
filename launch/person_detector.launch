@@ -1,0 +1,23 @@
+<launch>
+  <arg name="image_topic" default="/camera/image_raw" />
+  <!--<arg name="pose_topic" default="body_pose" />-->
+  <arg name="network" default="$(find ros_pose)/config/MobileNetSSD_deploy.prototxt" />
+  <arg name="weights" default="$(find ros_pose)/config/MobileNetSSD_deploy.caffemodel" />
+  <arg name="width" default="300" />
+  <arg name="height" default="300" />
+  <arg name="display" default="true" />
+  <arg name="threshold" default="0.8" />
+  
+  <node name="person_detector" pkg="ros_pose" type="person_detector.py"  output="screen" respawn="false">
+    <remap from="image_raw" to="$(arg image_topic)" />
+    <!--<remap from="body_pose" to="$(arg pose_topic)" />-->
+    <param name="network" type="string" value="$(arg network)" />
+    <param name="weights" type="string" value="$(arg weights)" />
+    <param name="width" type="int" value="$(arg width)" />
+    <param name="height" type="int" value="$(arg height)" />
+    <param name="display" type="bool" value="$(arg display)" />
+    <param name="threshold" type="double" value="$(arg threshold)" />
+  </node>
+  
+</launch>
+
