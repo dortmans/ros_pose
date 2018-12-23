@@ -11,7 +11,7 @@ import os
 import math
 import rospy
 from cv_bridge import CvBridge, CvBridgeError
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, RegionOfInterest
 from ros_pose.msg import BodyPose
 
 import cv2
@@ -32,7 +32,8 @@ class PoseEstimation:
         self.pose_publisher = rospy.Publisher("body_pose", BodyPose, queue_size=1)
         self.image_subscriber = rospy.Subscriber("image_raw", Image, self.on_image_message,  
             queue_size=1, buff_size=2**24) # large buff_size for lower latency
-
+        self.roi_subscriber = rospy.Subscriber("roi", RegionOfInterest, self.on_roi_message, queue_size=1,)
+            
     def to_cv2(self, image_msg):
         """Convert ROS image message to OpenCV image
 
@@ -58,6 +59,14 @@ class PoseEstimation:
         """
         self.image = self.to_cv2(image_msg)
         self.process_image()
+
+    def on_roi_message(self, roi_msg):
+        """Process received ROS RegionOfInterest message
+        """
+        self.roi_x = roi_msg.x_offset     # Leftmost pixel of the ROI
+        self.roi_y = roi_msg.y_offset     # Topmost pixel of the ROI
+        self.roi_height = roi_msg.height  # Height of ROI
+        self.roi_width = roi_msg.width    # Width of ROI
 
     def process_image_setup(self):
         """Setup for image processing. 
@@ -89,12 +98,21 @@ class PoseEstimation:
                ["REye", "REar"], ["Nose", "LEye"], ["LEye", "LEar"] ]
 
         self.net = cv2.dnn.readNetFromTensorflow(self.network)
+        
+        self.roi_x, self.roi_y, self.roi_height, self.roi_width = None, None, None, None
+        
+        # Define the codec and create VideoWriter object
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        self.video = cv2.VideoWriter('pose.avi', fourcc, 5, (640, 480), True)
             
     def process_image(self):
         """Process the image using OpenCV DNN
 
         This code is run for reach image
         """           
+        
+        #if self.roi_x != None:
+        #  self.image = self.image[self.roi_y:self.roi_y+self.roi_height, self.roi_x:self.roi_x+self.roi_width]
         
         imageWidth = self.image.shape[1]
         imageHeight = self.image.shape[0]
@@ -146,6 +164,7 @@ class PoseEstimation:
                         cv2.ellipse(self.image, points[idFrom], (3, 3), 0, 0, 360, (0, 0, 255), cv2.FILLED)
                         cv2.ellipse(self.image, points[idTo], (3, 3), 0, 0, 360, (0, 0, 255), cv2.FILLED)         
             cv2.imshow("image", self.image)
+            self.video.write(self.image)
             cv2.waitKey(1)
 
         self.pose_publisher.publish(pose_msg)

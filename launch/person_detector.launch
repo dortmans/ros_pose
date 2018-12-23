@@ -6,7 +6,7 @@
   <arg name="width" default="300" />
   <arg name="height" default="300" />
   <arg name="display" default="true" />
-  <arg name="threshold" default="0.8" />
+  <arg name="threshold" default="0.5" />
   
   <node name="person_detector" pkg="ros_pose" type="person_detector.py"  output="screen" respawn="false">
     <remap from="image_raw" to="$(arg image_topic)" />
