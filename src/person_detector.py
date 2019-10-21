@@ -72,6 +72,7 @@ class PersonDetection:
         rospack = rospkg.RosPack()
         
         self.display = rospy.get_param('~display', True)
+        self.record = rospy.get_param('~record', False)
         self.network = rospy.get_param('~network', rospack.get_path('ros_pose')+'/config/'+'MobileNetSSD_deploy.prototxt')
         self.weights = rospy.get_param('~weights', rospack.get_path('ros_pose')+'/config/'+'MobileNetSSD_deploy.caffemodel')
         self.threshold = rospy.get_param('~threshold', 0.8) # Confidence threshold
@@ -95,9 +96,14 @@ class PersonDetection:
         self.previous_height = None
         self.velocity = 0
         
-        # Define the codec and create VideoWriter object
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        self.video = cv2.VideoWriter('person.avi', fourcc, 15, (640, 480), True)
+        self.alfa = 0.9 # smoothing factor for exponential moving average
+        self.roi_x_last, self.roi_y_last = None, None
+        self.roi_width_last, self.roi_height_last = None, None
+        
+        if self.record:
+          # Define the codec and create VideoWriter object
+          fourcc = cv2.VideoWriter_fourcc(*'XVID')
+          self.video = cv2.VideoWriter('person.avi', fourcc, 15, (640, 480), True)
 
 
     def process_image(self):
@@ -122,6 +128,7 @@ class PersonDetection:
         
         # Select specific object
         biggest_size = 0
+        roi_x, roi_y, roi_width, roi_height = 0, 0, imageWidth, imageHeight
         for detection in detections[0, 0, :, :]:
             class_id = detection[1]
             confidence = detection[2]
@@ -151,7 +158,7 @@ class PersonDetection:
                     roi_x = max(0, xLeftTop - margin)
                     roi_y = max(0, yLeftTop - margin)
                     roi_width = min(imageWidth, xRightBottom + margin) - roi_x
-                    roi_height = min(imageHeight, yRightBottom + margin) - roi_y 
+                    roi_height = min(imageHeight, yRightBottom + margin) - roi_y
                     
                   if self.display:
                     # Draw location of object  
@@ -166,6 +173,16 @@ class PersonDetection:
                     #              (255, 255, 255), cv2.FILLED)
                     cv2.putText(display_img, label, (xLeftTop, yLeftTop),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))    
+
+
+        # Filter roi using exponential moving average
+        if self.roi_x_last is not None:
+          roi_x = int(self.alfa * self.roi_x_last + (1-self.alfa) * roi_x)
+          roi_y = int(self.alfa * self.roi_y_last + (1-self.alfa) * roi_y)
+          roi_width = int(self.alfa * self.roi_width_last + (1-self.alfa) * roi_width)
+          roi_height= int(self.alfa * self.roi_height_last + (1-self.alfa) * roi_height)
+        self.roi_x_last, self.roi_y_last = roi_x, roi_y
+        self.roi_width_last, self.roi_height_last = roi_width, roi_height
 
         # Show Region Of Interest
         if self.display:
@@ -194,7 +211,7 @@ class PersonDetection:
             dx = roi_height - self.previous_height
             #print("dx: ",dx)
             self.velocity = dx / dt
-            print("velocity: {0:.2f}".format(self.velocity))
+            #print("velocity: {0:.2f}".format(self.velocity))
             restart = True
           else: # just wait for time to pass
             restart = False       
@@ -202,8 +219,8 @@ class PersonDetection:
           self.previous_timestamp = self.timestamp
           self.previous_height = roi_height
 
-        # Show Velocity
         if self.display:
+          # Show Velocity
           #label = str(self.velocity)
           label = "{0:.2f}".format(self.velocity)
           labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
@@ -216,7 +233,8 @@ class PersonDetection:
 
         # Show images
         cv2.imshow("image", display_img)
-        self.video.write(display_img)
+        if self.record:
+          self.video.write(display_img)
         cv2.imshow("roi", roi)       
         cv2.waitKey(1)
 
