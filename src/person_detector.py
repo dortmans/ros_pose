@@ -71,6 +71,7 @@ class PersonDetection:
         import rospkg
         rospack = rospkg.RosPack()
         
+        # Setup parameters
         self.display = rospy.get_param('~display', True)
         self.record = rospy.get_param('~record', False)
         self.network = rospy.get_param('~network', rospack.get_path('ros_pose')+'/config/'+'MobileNetSSD_deploy.prototxt')
@@ -79,6 +80,7 @@ class PersonDetection:
         self.inWidth = rospy.get_param('~width', 300) # Resize input to this width
         self.inHeight = rospy.get_param('~height', 300) # Resize input to this height
  
+        # Setup Deep Neural Network for person detection
         """       
         self.classNames = { 0: 'background',
                 1: 'aeroplane', 2: 'bicycle', 3: 'bird', 4: 'boat',
@@ -91,15 +93,17 @@ class PersonDetection:
                 
         self.net = cv2.dnn.readNetFromCaffe(self.network, self.weights)
         #self.net = cv2.dnn.readNetFromTensorflow(self.weights, self.network)
+     
+        # Setup Regin-Of-Interest estimation
+        self.alfa = 0.9 # smoothing factor
+        self.roi_last = None # previous roi
 
+        # Setup velocity estimation
         self.previous_timestamp = None
         self.previous_height = None
         self.velocity = 0
-        
-        self.alfa = 0.9 # smoothing factor for exponential moving average
-        self.roi_x_last, self.roi_y_last = None, None
-        self.roi_width_last, self.roi_height_last = None, None
-        
+
+        # Setup video writer 
         if self.record:
           # Define the codec and create VideoWriter object
           fourcc = cv2.VideoWriter_fourcc(*'XVID')
@@ -126,40 +130,39 @@ class PersonDetection:
         # Detect various object classes
         detections = self.net.forward()
         
-        # Select specific object
+        # Estimate ROI of person we are focussing on
         biggest_size = 0
-        roi_x, roi_y, roi_width, roi_height = 0, 0, imageWidth, imageHeight
+        roi = [0, 0, imageHeight, imageWidth]
         for detection in detections[0, 0, :, :]:
             class_id = detection[1]
             confidence = detection[2]
             if confidence > self.threshold: # Only predictions above threshold
                 if class_id in self.classNames:
-                 
                   # Object location 
                   xLeftTop = int(detection[3] * self.inWidth) 
                   yLeftTop = int(detection[4] * self.inHeight)
                   xRightBottom   = int(detection[5] * self.inWidth)
-                  yRightBottom   = int(detection[6] * self.inHeight)
-                                   
+                  yRightBottom   = int(detection[6] * self.inHeight)          
                   # Factor for scale to original size of image
                   heightFactor = imageHeight/float(self.inHeight) 
                   widthFactor = imageWidth/float(self.inWidth)
                   # Scale object detection to image
                   xLeftTop = int(widthFactor * xLeftTop) 
                   yLeftTop = int(heightFactor * yLeftTop)
-                  xRightBottom   = int(widthFactor * xRightBottom)
-                  yRightBottom   = int(heightFactor * yRightBottom)
+                  xRightBottom = int(widthFactor * xRightBottom)
+                  yRightBottom = int(heightFactor * yRightBottom)
                                    
-                  # Remember roi of biggest one
+                  # Remember ROI of biggest one
                   size = (xRightBottom - xLeftTop) * (yRightBottom - yLeftTop)
+                  margin = 10
                   if size > biggest_size:
                     biggest_size = size
-                    margin = 10
                     roi_x = max(0, xLeftTop - margin)
                     roi_y = max(0, yLeftTop - margin)
-                    roi_width = min(imageWidth, xRightBottom + margin) - roi_x
-                    roi_height = min(imageHeight, yRightBottom + margin) - roi_y
-                    
+                    roi_height = min(imageHeight, yRightBottom - yLeftTop + 2*margin)
+                    roi_width = min(imageWidth, xRightBottom - xLeftTop + 2*margin)
+                    roi = [roi_x, roi_y, roi_height, roi_width]
+                                           
                   if self.display:
                     # Draw location of object  
                     cv2.rectangle(display_img, (xLeftTop, yLeftTop), (xRightBottom, yRightBottom), (0, 255, 0))                   
@@ -174,31 +177,22 @@ class PersonDetection:
                     cv2.putText(display_img, label, (xLeftTop, yLeftTop),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))    
 
+        # Filter ROI using exponential moving average
+        if self.roi_last is not None:
+          roi = [int(self.alfa * i + (1-self.alfa) * j) for i,j in zip(self.roi_last,roi)]
+        self.roi_last = roi
 
-        # Filter roi using exponential moving average
-        if self.roi_x_last is not None:
-          roi_x = int(self.alfa * self.roi_x_last + (1-self.alfa) * roi_x)
-          roi_y = int(self.alfa * self.roi_y_last + (1-self.alfa) * roi_y)
-          roi_width = int(self.alfa * self.roi_width_last + (1-self.alfa) * roi_width)
-          roi_height= int(self.alfa * self.roi_height_last + (1-self.alfa) * roi_height)
-        self.roi_x_last, self.roi_y_last = roi_x, roi_y
-        self.roi_width_last, self.roi_height_last = roi_width, roi_height
-
-        # Show Region Of Interest
-        if self.display:
-          cv2.rectangle(display_img, (roi_x, roi_y), (roi_x+roi_width, roi_y+roi_height), (0, 0, 255))
-
-        # Publish Region Of Interest
+        # Publish ROI
         roi_msg = RegionOfInterest()
-        roi_msg.x_offset = roi_x    # Leftmost pixel of the ROI
-        roi_msg.y_offset = roi_y    # Topmost pixel of the ROI
-        roi_msg.height = roi_height # Height of ROI
-        roi_msg.width = roi_width   # Width of ROI
+        roi_msg.x_offset = roi[0] # Leftmost pixel of the ROI
+        roi_msg.y_offset = roi[1] # Topmost pixel of the ROI
+        roi_msg.height = roi[2]   # Height of ROI
+        roi_msg.width = roi[3]    # Width of ROI
         self.roi_publisher.publish(roi_msg)   
-        roi = self.image[roi_y:roi_y+roi_height, roi_x:roi_x+roi_width].copy()        
-        self.image_publisher.publish(self.to_imgmsg(roi))     
+        roi_image = self.image[roi[1]:roi[1]+roi[2], roi[0]:roi[0]+roi[3]].copy()    
+        self.image_publisher.publish(self.to_imgmsg(roi_image))     
 
-        # Calculate velocity
+        # Estimate velocity of person
         if self.previous_timestamp == None: # first image
           restart = True
         else:
@@ -208,35 +202,40 @@ class PersonDetection:
             restart = True
           elif dt > 0.3: # time to calculate
             #print("dt: ",dt)
-            dx = roi_height - self.previous_height
-            #print("dx: ",dx)
+            dx = roi[2] - self.previous_height
             self.velocity = dx / dt
-            #print("velocity: {0:.2f}".format(self.velocity))
             restart = True
           else: # just wait for time to pass
             restart = False       
         if restart:
           self.previous_timestamp = self.timestamp
-          self.previous_height = roi_height
+          self.previous_height = roi[2]
 
-        if self.display:
-          # Show Velocity
-          #label = str(self.velocity)
-          label = "{0:.2f}".format(self.velocity)
-          labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-          cv2.putText(display_img, label, (roi_x, roi_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
-
-        # Publish Velocity
+        # Publish velocity
         velocity_msg = Float32()
         velocity_msg.data = self.velocity
         self.velocity_publisher.publish(velocity_msg)
 
-        # Show images
-        cv2.imshow("image", display_img)
+        if self.display:
+          # Show Region Of Interest
+          cv2.rectangle(display_img, (roi[0], roi[1]), (roi[0]+roi[3], roi[1]+roi[2]), (0, 0, 255))
+          #cv2.rectangle(display_img, (roi_x, roi_y), (roi_x+roi_width, roi_y+roi_height), (0, 0, 255))
+          
+          # Show velocity
+          #label = str(self.velocity)
+          label = "{0:.2f}".format(self.velocity)
+          labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+          cv2.putText(display_img, label, (roi[0], roi[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
+          
+          # Show images
+          cv2.imshow("image", display_img)
+          cv2.imshow("roi", roi_image)       
+          cv2.waitKey(1)
+
         if self.record:
+          # Write video frame
           self.video.write(display_img)
-        cv2.imshow("roi", roi)       
-        cv2.waitKey(1)
+
 
 def main(args):
     rospy.init_node('person_detector', anonymous=True)
